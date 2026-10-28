@@ -42,7 +42,7 @@
  *      piezo -> parallel load resistor (~1 MOhm) -> resistor divider / clamp
  *             -> Schottky clamp diodes to GND and to 3V3 -> (optional) op-amp
  *                buffer -> Ax
- *  Without clamping you can destroy the board.  See piezo_weld_aligner_README.md for a circuit note.
+ *  Without clamping you can destroy the board.  See README.md for a circuit note.
  *
  *  "Fast / memory-address level"
  *  -----------------------------
@@ -52,7 +52,7 @@
  *  (amplitude * dt), so the result is correct regardless of the achieved rate,
  *  and it PRINTS the measured sample rate so you know your timing resolution.
  *  For true register/DMA-level speed (simultaneous ADC1+ADC4, timer-triggered
- *  DMA up to ~2.5 MS/s) see "GOING FASTER" in piezo_weld_aligner_README.md.
+ *  DMA up to ~2.5 MS/s) see "GOING FASTER" in README.md.
  * ========================================================================= */
 
 #include <Arduino.h>

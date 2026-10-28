@@ -116,6 +116,31 @@ as in the sealer (same shims, same orientation) and keep every chip with its cha
 > type `p` first). Recheck before each test session with `v` (one known load; more than 3 % off
 > means recalibrate), after any overload, after re-mounting, or after a large temperature change.
 
+**Example CAL line** (from a simulated calibration; your chips will give their own values, so do
+not paste this one into your board):
+
+```
+CAL1 k=465.83,345.34,503.79 q=0.000,-19.910,0.000 tau=71.56,63.90,68.04 off=55.7,-50.1,-5.6 b=0.19,0.00,-0.18 dev=0.34,0.45,0.44 kc=1,1,1 tc=1,1,1 oc=1 thr=5.0 note=2026-10-28_22C
+```
+
+Each field lists CH1 (A0), CH2 (A1), CH3 (A2) in that order:
+
+| Field | Meaning |
+|---|---|
+| `k` | Sensitivity in N/V (k = Cf/S) |
+| `q` | Curvature term: 0 = straight-line fit; non-zero when the curved fit was accepted (CH2 here) |
+| `tau` | Charge leak time constant in s (about 68 s nominal) |
+| `off` | Timing offsets in µs (`show` displays them in ms) |
+| `b`, `dev` | Fit intercept (N) and worst fit error (%); record only. `dev=-1` = not calibrated |
+| `kc`, `tc` | 1 = that channel's k / τ was calibrated, 0 = standard value |
+| `oc` | 1 = timing offsets were calibrated |
+| `thr` | Onset threshold, N |
+| `note` | Text from the `note` command; spaces become `_` |
+
+It is one line even if the monitor wraps it. Each `k` belongs to one chip on one input: if you
+swap chips between A0, A1 and A2, recalibrate. After power-up, paste the line at the
+`CALIBRATION SETUP` prompt and press Enter; you should see `Calibration loaded.`
+
 ## 6. Reading a squeeze report
 
 Taken from the simulation in section 8 (CH2 side closing 0.88 ms before CH1 and 2.12 ms before CH3):
