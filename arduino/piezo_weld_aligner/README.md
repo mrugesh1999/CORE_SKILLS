@@ -1,5 +1,12 @@
 # Piezo weld aligner — Arduino UNO Q (STM32U585)
 
+> **Superseded by [`../piezo_force_monitor`](../piezo_force_monitor)** (charge amplifiers +
+> PI PL033.31 chips, force from the charge equation, guided per-piezo calibration).
+> Known limitation of this older sketch on the UNO Q: it prints and reads with `Serial`. Without
+> the Bridge library, `Serial` is the D0/D1 UART, not the serial monitor. Its loop also checks
+> for input on every pass, and on the UNO Q each serial-monitor call is an RPC to the Linux side.
+> The new sketch uses the Bridge `Monitor` object and samples in its own thread.
+
 Firmware to align the horn/anvil of an **ultrasonic welder** using three piezo
 discs, and to measure the impact (compression force proxy) per side.
 
