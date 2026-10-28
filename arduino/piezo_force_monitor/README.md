@@ -174,9 +174,16 @@ otherwise look like a squeeze.
 
 ## 8. How it was verified
 
-I could not build or flash for the real board in this environment. **The first compile on your
-UNO Q is the first real-toolchain build**, so please report any compile message. What was checked:
+I could not build or flash for the real board in this environment. What was checked:
 
+- **The first real compile (Arduino IDE)** failed with `'Sample' does not name a type`. Before
+  compiling a `.ino`, the IDE inserts an auto-generated prototype for every function just above
+  the first function definition, so every type used in a function signature must be defined
+  above that point. All types now live in the `TYPES` section at the top. That compile also
+  reached the end of the file with no other errors: none from Zephyr, `Monitor` or macro clashes.
+- **The IDE's prototype step is emulated**: `extras/sim/arduino_proto_emul.py` follows the rules
+  in arduino-cli's preprocessor source. It reproduced the reported errors line for line, and
+  `run_sim.sh` now builds the simulation only from that preprocessed output.
 - **Against the real UNO Q sources**: the Zephyr core (`ArduinoCore-zephyr`), the board files
   (14-bit ADC, A0–A2 = PA4/PA5/PA6), the Bridge `Monitor` class, and the loader's export table.
   Every kernel, libc and libm call the sketch makes is exported to sketches. Thread creation copies
@@ -200,7 +207,7 @@ UNO Q is the first real-toolchain build**, so please report any compile message.
 | Self-check residual | 0 % | 0.00 % |
 | Skip / paste / "no line ending" / no-thread fallback | — | all run correctly |
 
-Run it yourself with `extras/sim/run_sim.sh` (needs g++).
+Run it yourself with `extras/sim/run_sim.sh` (needs g++ and python3).
 
 ## 9. Main settings (top of the sketch)
 

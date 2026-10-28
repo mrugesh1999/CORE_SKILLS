@@ -134,6 +134,110 @@ static const float    STD_K     = (float)(CF_F / S_STD_CN);  // 400 N/V
 static const float    N_PER_LBF = 4.4482216f;
 static const float    N_PER_KGF = 9.80665f;
 
+/* ================================= TYPES ================================== */
+// Every type is defined here, before the first function.  The Arduino build
+// generates a prototype for each function of a .ino file and inserts them all
+// just above the first function definition, so a type used in any function
+// signature must already be defined there (otherwise: "'X' does not name a
+// type").  Keep new types in this section.
+
+// one scan of the three channels (written by the sampler thread)
+struct Sample {
+  uint32_t t0;            // microseconds, end of channel 0's conversion
+  uint16_t dt[NCH - 1];   // microseconds after t0 for channels 1 and 2
+  int16_t  raw[NCH];      // ADC counts, -1 = conversion error
+};
+
+// calibration of the three chip/channel pairs
+struct Cal {
+  float k[NCH];        // N/V                F = k*X + q*X*|X|,  X = corrected dV
+  float q[NCH];        // N/V^2              0 = linear (spec: quadratic if curved)
+  float b[NCH];        // N, fit intercept   (record only; should be near 0)
+  float dev[NCH];      // %, worst fit deviation (record only; -1 = none)
+  float tau[NCH];      // s, leak time constant Rf*Cf per channel
+  float off[NCH];      // us, timing offset subtracted from each onset
+  bool  kCal[NCH], tauCal[NCH], offCal;
+  char  note[40];
+};
+
+// capture engine: one press or squeeze
+enum CapPurpose : uint8_t { CP_MEASURE, CP_COND, CP_TAU, CP_KPOINT, CP_VERIFY, CP_OFFSET };
+enum EndReason  : uint8_t { END_NONE, END_RELEASED, END_TIMEOUT, END_SMALL };
+
+struct CapCfg {
+  CapPurpose purpose;
+  int8_t     focus;          // chip index, or -1 = all three (F_total)
+  uint8_t    trigMask;       // channels allowed to trigger
+  uint32_t   postUs, timeoutUs;
+  float      minEvent;       // N; lighter events count as "small"
+  bool       quiet;          // don't announce "ready" again
+};
+
+struct CapArm {
+  bool     init, warm, warmEvent;
+  uint32_t t0, tLast;
+  float    trk[NCH];           // slew-limited resting level (trigger only)
+  uint32_t tQuiet[NCH];        // last time each channel carried no force
+  uint8_t  negWarned, negEvent;
+  float    negF[NCH];
+};
+
+struct Blk { float x[NCH], f[NCH], ftot; uint32_t tEnd; };
+static const uint8_t  NBLK   = 16;           // 16 x 50 ms
+static const uint32_t BLK_US = 50000;
+static const uint32_t PL_GUARD_US = 100000;  // plateau ends 0.1 s before release ...
+static const uint32_t PL_WIN_US   = 500000;  // ... and is 0.5 s long
+
+struct CapRun {
+  uint32_t tStart;                 // us; onset times are relative to this
+  float    base[NCH];              // V, pre-closure mean
+  double   I[NCH];                 // V*s, integral of (V - V_eq) (leak correction)
+  float    dV[NCH], X[NCH], F[NCH], Ftot;
+  bool     havePrev;
+  uint32_t tPrev[NCH];
+  float    Fprev[NCH];
+  bool     on[NCH];
+  float    tOn[NCH];               // us after tStart, interpolated
+  float    sigV[NCH];              // V, baseline noise (from the pre-closure window)
+  float    sigT[NCH];              // us, onset timing noise = noise / slope at crossing
+  float    sgMax;                  // peak of the focus signal (F_i or F_total)
+  float    rawMax;                 // same without leak correction (event detection)
+  float    peakTot, tPeakTot, FatPk[NCH];
+  float    peakF[NCH], peakX[NCH];
+  bool     clipHi[NCH], clipLo[NCH];
+  uint32_t nSmp, gaps, drops0, ovr0, err0;
+  bool     t90Set;
+  Blk      blk[NBLK];
+  uint8_t  blkHead, blkCount;
+  uint32_t blkT0;
+  double   bx[NCH], bf[NCH], bt;
+  uint16_t bn;
+  bool     plOk;
+  uint8_t  plN;
+  float    plX[NCH], plF[NCH], plFtot, plSpread;
+  bool     rel, belowSet;
+  uint32_t tRel, tBelow;
+  double   rSum;
+  uint32_t rN;
+  double   tI[NCH], tDV[NCH], tX[NCH];
+  uint32_t tN;
+  uint8_t  endReason;
+};
+
+struct Cap { CapCfg cfg; CapArm arm; CapRun run; bool armed, active, done; };
+
+// user-interface state machines
+enum Mode   : uint8_t { MODE_SELFTEST, MODE_STARTUP, MODE_MEASURE, MODE_CAL };
+enum MState : uint8_t { M_ARMED, M_DONE };
+enum CState : uint8_t {
+  C_MENU, C_COND, C_TAU_PRESS, C_TAU_DECIDE, C_K_PRESS, C_K_REF, C_K_FIT,
+  C_OFF_PRESS, C_OFF_DECIDE, C_VER_SELECT, C_VER_PRESS, C_VER_REF
+};
+
+// calibration wizard
+struct KPt { float x, f; };
+struct FitRes { bool ok; float k, b, worst, worstUse, rep, qk, qq, qWorst; uint8_t levels; bool qOk; };
+
 /* ============================ SMALL HELPERS =============================== */
 
 static inline float absf(float v) { return v < 0 ? -v : v; }
@@ -327,11 +431,6 @@ static void pollInput() {
 // loop() drains.  If the thread cannot be created the same scan runs from
 // loop() instead (slower serial output then causes gaps; reported).
 
-struct Sample {
-  uint32_t t0;            // microseconds, end of channel 0's conversion
-  uint16_t dt[NCH - 1];   // microseconds after t0 for channels 1 and 2
-  int16_t  raw[NCH];      // ADC counts, -1 = conversion error
-};
 static inline uint32_t sT(const Sample& s, uint8_t i) { return i == 0 ? s.t0 : s.t0 + s.dt[i - 1]; }
 
 static Sample   gQ[QN];
@@ -502,16 +601,6 @@ static void idleFeed(const Sample& s) {
 
 /* ============================ CALIBRATION MODEL =========================== */
 
-struct Cal {
-  float k[NCH];        // N/V                F = k*X + q*X*|X|,  X = corrected dV
-  float q[NCH];        // N/V^2              0 = linear (spec: quadratic if curved)
-  float b[NCH];        // N, fit intercept   (record only; should be near 0)
-  float dev[NCH];      // %, worst fit deviation (record only; -1 = none)
-  float tau[NCH];      // s, leak time constant Rf*Cf per channel
-  float off[NCH];      // us, timing offset subtracted from each onset
-  bool  kCal[NCH], tauCal[NCH], offCal;
-  char  note[40];
-};
 static Cal   gCal;
 static float gThrN = THR_DEFAULT_N;
 static bool  gAuto = false;
@@ -546,70 +635,6 @@ static bool anyCalibrated() {
 // the samples since then are replayed, and the force equation runs on every
 // sample until release + 0.3 s.
 
-enum CapPurpose : uint8_t { CP_MEASURE, CP_COND, CP_TAU, CP_KPOINT, CP_VERIFY, CP_OFFSET };
-enum EndReason  : uint8_t { END_NONE, END_RELEASED, END_TIMEOUT, END_SMALL };
-
-struct CapCfg {
-  CapPurpose purpose;
-  int8_t     focus;          // chip index, or -1 = all three (F_total)
-  uint8_t    trigMask;       // channels allowed to trigger
-  uint32_t   postUs, timeoutUs;
-  float      minEvent;       // N; lighter events count as "small"
-  bool       quiet;          // don't announce "ready" again
-};
-
-struct CapArm {
-  bool     init, warm, warmEvent;
-  uint32_t t0, tLast;
-  float    trk[NCH];           // slew-limited resting level (trigger only)
-  uint32_t tQuiet[NCH];        // last time each channel carried no force
-  uint8_t  negWarned, negEvent;
-  float    negF[NCH];
-};
-
-struct Blk { float x[NCH], f[NCH], ftot; uint32_t tEnd; };
-static const uint8_t  NBLK   = 16;           // 16 x 50 ms
-static const uint32_t BLK_US = 50000;
-static const uint32_t PL_GUARD_US = 100000;  // plateau ends 0.1 s before release ...
-static const uint32_t PL_WIN_US   = 500000;  // ... and is 0.5 s long
-
-struct CapRun {
-  uint32_t tStart;                 // us; onset times are relative to this
-  float    base[NCH];              // V, pre-closure mean
-  double   I[NCH];                 // V*s, integral of (V - V_eq) (leak correction)
-  float    dV[NCH], X[NCH], F[NCH], Ftot;
-  bool     havePrev;
-  uint32_t tPrev[NCH];
-  float    Fprev[NCH];
-  bool     on[NCH];
-  float    tOn[NCH];               // us after tStart, interpolated
-  float    sigV[NCH];              // V, baseline noise (from the pre-closure window)
-  float    sigT[NCH];              // us, onset timing noise = noise / slope at crossing
-  float    sgMax;                  // peak of the focus signal (F_i or F_total)
-  float    rawMax;                 // same without leak correction (event detection)
-  float    peakTot, tPeakTot, FatPk[NCH];
-  float    peakF[NCH], peakX[NCH];
-  bool     clipHi[NCH], clipLo[NCH];
-  uint32_t nSmp, gaps, drops0, ovr0, err0;
-  bool     t90Set;
-  Blk      blk[NBLK];
-  uint8_t  blkHead, blkCount;
-  uint32_t blkT0;
-  double   bx[NCH], bf[NCH], bt;
-  uint16_t bn;
-  bool     plOk;
-  uint8_t  plN;
-  float    plX[NCH], plF[NCH], plFtot, plSpread;
-  bool     rel, belowSet;
-  uint32_t tRel, tBelow;
-  double   rSum;
-  uint32_t rN;
-  double   tI[NCH], tDV[NCH], tX[NCH];
-  uint32_t tN;
-  uint8_t  endReason;
-};
-
-struct Cap { CapCfg cfg; CapArm arm; CapRun run; bool armed, active, done; };
 static Cap gCap;
 
 static void capArm(CapPurpose p, int8_t focus, bool quiet) {
@@ -842,12 +867,6 @@ static void capFeed(const Sample& s) {
 
 /* ============================= MODES / STATE ============================== */
 
-enum Mode   : uint8_t { MODE_SELFTEST, MODE_STARTUP, MODE_MEASURE, MODE_CAL };
-enum MState : uint8_t { M_ARMED, M_DONE };
-enum CState : uint8_t {
-  C_MENU, C_COND, C_TAU_PRESS, C_TAU_DECIDE, C_K_PRESS, C_K_REF, C_K_FIT,
-  C_OFF_PRESS, C_OFF_DECIDE, C_VER_SELECT, C_VER_PRESS, C_VER_REF
-};
 static Mode     gMode   = MODE_SELFTEST;
 static MState   gMState = M_ARMED;
 static CState   gCState = C_MENU;
@@ -1151,11 +1170,9 @@ static void tryLoadCal(const char* ln) {
 static uint16_t gCondN = 0;
 static float    gTauRuns[8];
 static uint8_t  gTauN = 0;
-struct KPt { float x, f; };
 static KPt      gPts[32];
 static uint8_t  gPtN = 0;
 static float    gPendX = 0;
-struct FitRes { bool ok; float k, b, worst, worstUse, rep, qk, qq, qWorst; uint8_t levels; bool qOk; };
 static FitRes   gFit;
 static double   gOffSum[NCH], gOffSq[NCH];
 static uint8_t  gOffN = 0;

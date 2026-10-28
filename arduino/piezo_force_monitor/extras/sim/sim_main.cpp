@@ -1,5 +1,5 @@
 // Host simulation of piezo_force_monitor.ino on the spec's circuit.
-// Build: g++ -std=c++17 -O2 -Istub sim_main.cpp -o sim   (or ./run_sim.sh)
+// Build: ./run_sim.sh  (emulates the Arduino .ino prototype step, then builds and runs)
 // Run:   ./sim <full|skip|paste|noeol|inline> [quiet]
 #include "Arduino.h"
 #include "Arduino_RouterBridge.h"
@@ -16,7 +16,10 @@ static uint64_t simNextScanNs = 0;
 static const uint64_t SIM_PERIOD_NS = 500000;      // 2 kHz, like the k_timer
 static void   (*simSamplerHook)() = nullptr;
 
-#include "../../piezo_force_monitor.ino"            // the sketch, unchanged
+#ifndef SKETCH_FILE                                  // run_sim.sh passes the sketch after the
+#define SKETCH_FILE "../../piezo_force_monitor.ino" // Arduino-style prototype step (see
+#endif                                              // arduino_proto_emul.py)
+#include SKETCH_FILE                                 // the sketch, unchanged
 
 /* ------------------------------ physics ---------------------------------- */
 struct SimChan { double S0, alpha, Cf, tau, tauIn, vref, qin, vamp, vout, eTau, eIn, eOut; };
