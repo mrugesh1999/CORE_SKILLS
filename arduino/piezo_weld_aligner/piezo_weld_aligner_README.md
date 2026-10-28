@@ -1,6 +1,6 @@
 # Piezo weld aligner — Arduino UNO Q (STM32U585)
 
-> **Superseded by [`../piezo_force_monitor`](../piezo_force_monitor)** (charge amplifiers +
+> **Superseded by [`piezo_force_monitor`](../piezo_force_monitor/piezo_force_monitor_README.md)** (charge amplifiers +
 > PI PL033.31 chips, force from the charge equation, guided per-piezo calibration).
 > Known limitation of this older sketch on the UNO Q: it prints and reads with `Serial`. Without
 > the Bridge library, `Serial` is the D0/D1 UART, not the serial monitor. Its loop also checks
